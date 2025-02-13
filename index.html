@@ -209,13 +209,20 @@
 
         // Capture Photo
         captureBtn.addEventListener("click", () => {
-            attempts++;
-            takePhoto();
-
             if (attempts < maxAttempts) {
-                confirmationBox.style.display = "block";
-            } else {
-                confirmPhoto();
+                attempts++;
+                takePhoto();
+
+                if (attempts < maxAttempts) {
+                    confirmationBox.style.display = "block";
+                } else {
+                    confirmPhoto();
+                }
+            }
+            // Disable capture button after 3 attempts
+            if (attempts >= maxAttempts) {
+                captureBtn.disabled = true;
+                captureBtn.textContent = "Max Attempts Reached";
             }
         });
 
@@ -267,6 +274,10 @@
             // Display the message in the message box
             messageBox.textContent = "Photo confirmed!";
             messageBox.style.display = "block";
+
+            // Disable capture button after confirming the photo
+            captureBtn.disabled = true;
+            captureBtn.textContent = "Photo Confirmed"; // Update text to reflect confirmation
 
             setTimeout(() => {
                 messageBox.style.display = "none"; // Hide the message after 3 seconds

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Photo Capture</title>
+    <title>Photo Capture with Auto Flashlight</title>
     <style>
         body {
             text-align: center;
@@ -35,6 +35,17 @@
             border-radius: 10px;
             margin-top: 10px;
             transform: scaleX(-1); /* Mirror live camera preview */
+            filter: brightness(0.4) contrast(1.2); /* Default for night sight */
+        }
+
+        .flashlight-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.7); /* Simulate flashlight with a white overlay */
+            display: none;
         }
 
         canvas, img {
@@ -74,10 +85,6 @@
             max-width: 400px;
         }
 
-        .modal button {
-            margin: 5px;
-        }
-
         #locationText {
             color: #6d4c41;
             font-weight: bold;
@@ -100,7 +107,7 @@
             opacity: 1;
             transform: translateY(0);
         }
-        
+
         #messageBox.hide {
             opacity: 0;
             transform: translateY(-20px);
@@ -109,184 +116,227 @@
 </head>
 <body>
 
-    <div class="container">
-        <h2>Take a Photo with Date, Time, and Location</h2>
-        <video id="video" autoplay></video>
-        <canvas id="canvas" style="display:none;"></canvas>
-        <img id="previewImage" alt="Photo Preview" style="display:none;">
-        <p id="locationText">Location: Fetching...</p>
-        <button id="capture">Capture Photo</button>
-    </div>
+<div class="container">
+    <h2>Take a Photo with Date, Time, and Location</h2>
+    <video id="video" autoplay></video>
+    <div id="flashlightOverlay" class="flashlight-overlay"></div> <!-- Flashlight Overlay -->
+    <canvas id="canvas" style="display:none;"></canvas>
+    <img id="previewImage" alt="Photo Preview" style="display:none;">
+    <p id="locationText">Location: Fetching...</p>
+    <button id="capture">Capture Photo</button>
+</div>
 
-    <div id="confirmationBox">
-        <p>Do you want to keep this photo?</p>
-        <button id="confirm">Confirm</button>
-        <button id="retake">Retake</button>
-    </div>
+<div id="confirmationBox">
+    <p>Do you want to keep this photo?</p>
+    <button id="confirm">Confirm</button>
+    <button id="retake">Retake</button>
+</div>
 
-    <button id="download" style="display:none;">Download</button>
+<button id="download" style="display:none;">Download</button>
 
-    <div id="messageBox"></div>
+<div id="messageBox"></div>
 
-    <script>
-        const video = document.getElementById("video");
-        const canvas = document.getElementById("canvas");
-        const ctx = canvas.getContext("2d");
-        const previewImage = document.getElementById("previewImage");
-        const captureBtn = document.getElementById("capture");
-        const downloadBtn = document.getElementById("download");
-        const locationText = document.getElementById("locationText");
-        const confirmationBox = document.getElementById("confirmationBox");
-        const confirmBtn = document.getElementById("confirm");
-        const retakeBtn = document.getElementById("retake");
-        const messageBox = document.getElementById("messageBox");
+<script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const previewImage = document.getElementById("previewImage");
+    const captureBtn = document.getElementById("capture");
+    const downloadBtn = document.getElementById("download");
+    const locationText = document.getElementById("locationText");
+    const confirmationBox = document.getElementById("confirmationBox");
+    const confirmBtn = document.getElementById("confirm");
+    const retakeBtn = document.getElementById("retake");
+    const messageBox = document.getElementById("messageBox");
+    const flashlightOverlay = document.getElementById("flashlightOverlay");
 
-        let locationData = "Location not found";
-        let attempts = 0;
-        const maxAttempts = 3;
-        let lastPhotoData = null;
+    let locationData = "Location not found";
+    let attempts = 0;
+    const maxAttempts = 3;
+    let lastPhotoData = null;
 
-        const GOOGLE_API_KEY = 'YOUR_GOOGLE_API_KEY'; // Replace with your Google Maps API key
+    // Start Camera (Mirrored Preview)
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+            video.srcObject = stream;
+            // Start detecting brightness
+            detectBrightness();
+        })
+        .catch(err => console.error("Camera access denied:", err));
 
-        // Start Camera (Mirrored Preview)
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => { video.srcObject = stream; })
-            .catch(err => console.error("Camera access denied:", err));
-
-        // Get Location using Google Maps API
-        function getLocation() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    async (position) => {
-                        const { latitude, longitude } = position.coords;
-                        try {
-                            const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_API_KEY}`);
-                            const data = await response.json();
-                            if (data.results.length > 0) {
-                                locationData = data.results[0].formatted_address;
-                                locationText.textContent = "Location: " + locationData;
-                            } else {
-                                locationText.textContent = "Location not found";
-                            }
-                        } catch (error) {
-                            locationText.textContent = "Location fetch failed";
+    // Get Location using OpenStreetMap API
+    function getLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const { latitude, longitude } = position.coords;
+                    try {
+                        // Use the correct OpenStreetMap reverse geocoding API
+                        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`);
+                        const data = await response.json();
+                        if (data.display_name) {
+                            locationData = data.display_name; // Use display_name for the location
+                            locationText.textContent = "Location: " + locationData;
+                        } else {
+                            locationText.textContent = "Location not found";
                         }
-                    },
-                    () => { locationText.textContent = "Location access denied"; }
-                );
-            }
-        }
-
-        getLocation();
-
-        // Capture Photo
-        captureBtn.addEventListener("click", () => {
-            if (attempts < maxAttempts) {
-                attempts++;
-                takePhoto();
-
-                if (attempts < maxAttempts) {
-                    confirmationBox.style.display = "block";
-                } else {
-                    confirmPhoto();
+                    } catch (error) {
+                        locationText.textContent = "Location fetch failed";
+                    }
+                },
+                () => {
+                    locationText.textContent = "Location access denied";
                 }
+            );
+        } else {
+            locationText.textContent = "Geolocation is not supported by this browser.";
+        }
+    }
+
+    getLocation();
+
+    // Detect Brightness from Video Feed
+    function detectBrightness() {
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        const frame = document.createElement("canvas");
+        const frameCtx = frame.getContext("2d");
+        frame.width = videoWidth;
+        frame.height = videoHeight;
+
+        setInterval(() => {
+            frameCtx.drawImage(video, 0, 0, videoWidth, videoHeight);
+            const imageData = frameCtx.getImageData(0, 0, videoWidth, videoHeight);
+            const data = imageData.data;
+
+            let totalBrightness = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                // Calculate brightness of each pixel
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                totalBrightness += (r + g + b) / 3; // average RGB value
             }
-            // Disable capture button after 3 attempts
-            if (attempts >= maxAttempts) {
-                captureBtn.disabled = true;
-                captureBtn.textContent = "Max Attempts Reached";
+
+            const averageBrightness = totalBrightness / (data.length / 4);
+            // Set threshold brightness value to trigger the flashlight (e.g., below 100 is considered dark)
+            if (averageBrightness < 100) {
+                flashlightOverlay.style.display = "block"; // Show flashlight overlay
+            } else {
+                flashlightOverlay.style.display = "none"; // Hide flashlight overlay
             }
-        });
+        }, 500); // Check brightness every 500ms
+    }
 
-        function takePhoto() {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+    // Capture Photo
+    captureBtn.addEventListener("click", () => {
+        if (attempts < maxAttempts) {
+            attempts++;
+            takePhoto();
 
-            // Flip the captured photo (Mirror horizontally)
-            ctx.save();
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.restore();
-
-            // Date & Time (without seconds)
-            const dateTime = new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-            });
-
-            // Add Date, Time, and Location at the Bottom
-            ctx.fillStyle = "#6d4c41"; // Light brown text
-            ctx.font = "24px Arial";
-            ctx.fillText(dateTime, 20, canvas.height - 70);
-            ctx.fillText(locationData, 20, canvas.height - 40);
-
-            // Save the latest photo data
-            lastPhotoData = canvas.toDataURL("image/png");
-
-            // Show preview image instead of canvas
-            previewImage.src = lastPhotoData;
-            previewImage.style.display = "block";
-            video.style.display = "none";
+            if (attempts < maxAttempts) {
+                confirmationBox.style.display = "block";
+            } else {
+                confirmPhoto();
+            }
         }
 
-        // Confirm Photo
-        confirmBtn.addEventListener("click", () => {
-            confirmPhoto();
+        // Disable capture button after 3 attempts
+        if (attempts >= maxAttempts) {
+            captureBtn.disabled = true;
+            captureBtn.textContent = "Max Attempts Reached";
+        }
+    });
+
+    function takePhoto() {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        // Flip the captured photo (Mirror horizontally)
+        ctx.save();
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        // Date & Time (without seconds)
+        const dateTime = new Date().toLocaleString('en-US', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
         });
 
-        function confirmPhoto() {
+        // Add Date, Time, and Location at the Bottom
+        ctx.fillStyle = "#6d4c41"; // Light brown text
+        ctx.font = "24px Arial";
+        ctx.fillText(dateTime, 20, canvas.height - 70);
+        ctx.fillText(locationData, 20, canvas.height - 40);
+
+        // Save the latest photo data
+        lastPhotoData = canvas.toDataURL("image/png");
+
+        // Show preview image instead of canvas
+        previewImage.src = lastPhotoData;
+        previewImage.style.display = "block";
+        video.style.display = "none";
+    }
+
+    // Confirm Photo
+    confirmBtn.addEventListener("click", () => {
+        confirmPhoto();
+    });
+
+    function confirmPhoto() {
+        confirmationBox.style.display = "none";
+        downloadBtn.style.display = "block";
+
+        // Display the message in the message box
+        messageBox.textContent = "Photo confirmed!";
+        messageBox.style.display = "block";
+        messageBox.classList.add("show");
+        messageBox.classList.remove("hide");
+
+        // Disable capture button after confirming the photo
+        captureBtn.disabled = true;
+        captureBtn.textContent = "Photo Confirmed";
+
+        setTimeout(() => {
+            messageBox.classList.remove("show");
+            messageBox.classList.add("hide"); // Hide the message after 3 seconds
+        }, 3000);
+    }
+
+    // Retake Photo
+    retakeBtn.addEventListener("click", () => {
+        if (attempts < maxAttempts) {
             confirmationBox.style.display = "none";
-            downloadBtn.style.display = "block";
+            previewImage.style.display = "none";
+            video.style.display = "block";
 
             // Display the message in the message box
-            messageBox.textContent = "Photo confirmed!";
+            messageBox.textContent = `Retaking photo... Attempts left: ${maxAttempts - attempts}`;
             messageBox.style.display = "block";
             messageBox.classList.add("show");
             messageBox.classList.remove("hide");
-
-            // Disable capture button after confirming the photo
-            captureBtn.disabled = true;
-            captureBtn.textContent = "Photo Confirmed";
 
             setTimeout(() => {
                 messageBox.classList.remove("show");
                 messageBox.classList.add("hide"); // Hide the message after 3 seconds
             }, 3000);
         }
+    });
 
-        // Retake Photo
-        retakeBtn.addEventListener("click", () => {
-            if (attempts < maxAttempts) {
-                confirmationBox.style.display = "none";
-                previewImage.style.display = "none";
-                video.style.display = "block";
-
-                // Display the message in the message box
-                messageBox.textContent = `Retaking photo... Attempts left: ${maxAttempts - attempts}`;
-                messageBox.style.display = "block";
-                messageBox.classList.add("show");
-                messageBox.classList.remove("hide");
-
-                setTimeout(() => {
-                    messageBox.classList.remove("show");
-                    messageBox.classList.add("hide"); // Hide the message after 3 seconds
-                }, 3000);
-            }
-        });
-
-        // Download Photo
-        downloadBtn.addEventListener("click", () => {
-            const link = document.createElement("a");
-            link.href = lastPhotoData;
-            link.download = "photo.png";
-            link.click();
-        });
-    </script>
+    // Download Photo
+    downloadBtn.addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.href = lastPhotoData;
+        link.download = "photo.png";
+        link.click();
+    });
+</script>
 
 </body>
 </html>

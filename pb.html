@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Booth</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            background-color: #f3f3f3;
+        }
+        video {
+            border: 2px solid black;
+            width: 100%; /* Ensure it scales to the container */
+            max-width: 600px; /* Max width on large screens */
+            margin-bottom: 20px;
+            transform: scaleX(-1);
+            border-radius: 20px; /* Rounded corners */
+            max-height: 400px; /* Limit video height */
+            object-fit: cover; /* Ensure video fits well within bounds */
+        }
+        button {
+            padding: 10px 20px;
+            margin-top: 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        canvas {
+            display: none;
+        }
+        .photo-grid {
+            display: none;
+            margin-top: 20px;
+            border: 1px solid black;
+            background: #e8e8e8;
+            padding: 10px;
+            width: 420px;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+            border-radius: 10px;
+        }
+        .loading {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        .error {
+            color: red;
+            font-size: 18px;
+        }
+        #retakeButton {
+            background-color: #f44336;
+        }
+        #retakeButton:hover {
+            background-color: #e53935;
+        }
+    
+        /* Responsive design for tablets and smaller devices */
+        @media (max-width: 1024px) {
+            video {
+                width: 90%;
+                margin-bottom: 15px;
+            }
+            .photo-grid {
+                width: 90%;
+            }
+            button {
+                font-size: 15px;
+                padding: 8px 16px;
+            }
+        }
+    
+        /* Mobile devices (small screens) */
+        @media (max-width: 768px) {
+            video {
+                width: 95%;
+                margin-bottom: 10px;
+            }
+            .photo-grid {
+                width: 100%;
+                margin-top: 10px;
+            }
+            button {
+                font-size: 14px;
+                padding: 8px 14px;
+            }
+            .loading, .error {
+                font-size: 16px;
+            }
+        }
+    
+        @media (max-width: 480px) {
+            video {
+                width: 100%;
+                max-width: 100%;
+                border-radius: 20px; /* More rounded on very small screens */
+            }
+            .photo-grid {
+                width: 100%;
+                margin-top: 10px;
+                padding: 5px;
+            }
+            button {
+                font-size: 14px;
+                padding: 6px 12px;
+            }
+            .loading, .error {
+                font-size: 14px;
+            }
+        }
+    
+    </style>
+    
+</head>
+<body>
+
+    <h1>Photo Booth</h1>
+    <video id="video" autoplay></video>
+    <div id="loadingMessage" class="loading" style="display:none;">Initializing camera...</div>
+    <div id="errorMessage" class="error" style="display:none;"></div>
+    <br>
+    <button id="captureButton" style="display:none;">Capture</button>
+    <button id="retakeButton" style="display:none;">Retake Photos</button>
+    <canvas id="canvas"></canvas>
+    <canvas id="photoGridCanvas"></canvas>
+    <img id="photoGrid" class="photo-grid"/>
+    <button id="downloadButton" style="display:none;">Download Photo</button>
+
+    <script>
+        const captureButton = document.getElementById('captureButton');
+        const retakeButton = document.getElementById('retakeButton');
+        const videoElement = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const gridCanvas = document.getElementById('photoGridCanvas');
+        const photoGrid = document.getElementById('photoGrid');
+        const downloadButton = document.getElementById('downloadButton');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const errorMessage = document.getElementById('errorMessage');
+        const context = canvas.getContext('2d');
+        const gridContext = gridCanvas.getContext('2d');
+
+        let stream;
+        let capturedImages = [];
+
+        window.onload = () => {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                loadingMessage.style.display = 'block';
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then((cameraStream) => {
+                        stream = cameraStream;
+                        videoElement.srcObject = stream;
+                        captureButton.style.display = 'inline-block'; // Show capture button after starting the camera
+                        loadingMessage.style.display = 'none'; // Hide loading message once the camera starts
+                    })
+                    .catch((err) => {
+                        loadingMessage.style.display = 'none';
+                        errorMessage.style.display = 'block';
+                        errorMessage.innerText = 'Error accessing camera. Please check your camera settings.';
+                    });
+            } else {
+                errorMessage.style.display = 'block';
+                errorMessage.innerText = 'Your browser does not support camera access.';
+            }
+        };
+
+        captureButton.addEventListener('click', async () => {
+            captureButton.disabled = true;
+            capturedImages = [];
+            for (let i = 0; i < 6; i++) {
+                await countdown();
+                capturePhoto();
+                await delay(1000); // Faster capture interval
+            }
+            generatePhotoGrid();
+            captureButton.disabled = false;
+            captureButton.innerText = "Capture";
+            retakeButton.style.display = 'inline-block'; // Show retake button
+        });
+
+        retakeButton.addEventListener('click', () => {
+            capturedImages = [];
+            photoGrid.style.display = 'none';
+            downloadButton.style.display = 'none';
+            retakeButton.style.display = 'none';
+            captureButton.style.display = 'inline-block'; // Show capture button again
+        });
+
+        function capturePhoto() {
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            context.save();
+            context.translate(canvas.width, 0);
+            context.scale(-1, 1);
+            context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+            context.restore();
+            
+            capturedImages.push(canvas.toDataURL('image/png'));
+        }
+
+        function generatePhotoGrid() {
+            if (capturedImages.length === 6) {
+                const cols = 2;
+                const rows = 3;
+                const gap = 10; // Space between images
+                const width = 180;
+                const height = 140;
+                const gridWidth = cols * width + (cols - 1) * gap + 20;  // Extra padding for the border
+                const gridHeight = rows * height + (rows - 1) * gap + 20;
+
+                gridCanvas.width = gridWidth;
+                gridCanvas.height = gridHeight;
+                gridContext.fillStyle = "#f1f1f1"; // Light gray background for the grid
+                gridContext.fillRect(0, 0, gridWidth, gridHeight);
+
+                // Draw each captured image with grid effect
+                capturedImages.forEach((imgSrc, index) => {
+                    let img = new Image();
+                    img.src = imgSrc;
+                    img.onload = () => {
+                        let x = (index % cols) * (width + gap) + 10;  // Add padding
+                        let y = Math.floor(index / cols) * (height + gap) + 10;
+                        
+                        // Draw a 1px border around each image
+                        gridContext.fillStyle = "black";
+                        gridContext.fillRect(x - 1, y - 1, width + 2, height + 2);  // 1px border
+                        gridContext.drawImage(img, x, y, width, height);
+                        
+                        if (index === 5) {
+                            photoGrid.src = gridCanvas.toDataURL('image/png');
+                            photoGrid.style.display = 'block';
+                            downloadButton.style.display = 'inline-block'; // Show download button
+                        }
+                    };
+                });
+            }
+        }
+
+        document.getElementById('downloadButton').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.href = photoGrid.src;
+            link.download = 'photo_grid.png';
+            link.click();
+        });
+
+        function countdown() {
+            return new Promise((resolve) => {
+                let count = 2;
+                const countdownInterval = setInterval(() => {
+                    captureButton.innerText = count > 0 ? `📸 ${count}...` : "SNAP!";
+                    if (count === 0) {
+                        clearInterval(countdownInterval);
+                        resolve();
+                    }
+                    count--;
+                }, 1000);
+            });
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+
+</body>
+</html>
